@@ -1,0 +1,12 @@
+<h1>Authorize yourself!</h1>
+
+<form method='post' action='/consent'>
+  <div><input type='text' name='totp'></div>
+  <input type='hidden' name='code' value='{{ code }}' />
+
+  <p>client: {{ client_id }}</p>
+
+  <p>scopes: {{ scope }}</p>
+
+  <input type='submit' value='consent' />
+</form>
