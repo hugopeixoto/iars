@@ -1,29 +1,16 @@
 use askama::Template;
 use actix_web::{get, web, HttpResponse, Responder};
 use serde::Deserialize;
-use rand::{thread_rng, Rng};
-use std::fmt::Write;
-
-fn generate_code() -> String {
-    let mut arr = [0u8; 20];
-
-    thread_rng().fill(&mut arr[..]);
-
-    let mut s = String::new();
-
-    for &b in arr.iter() {
-        write!(&mut s, "{:02X}", b).unwrap();
-    }
-
-    s
-}
 
 #[derive(Template)]
 #[template(path = "authorization.html")]
 struct View<'a> {
-    code: &'a str,
-    client_id: &'a str,
-    scope: &'a str,
+    client_id: &'a String,
+    redirect_uri: &'a String,
+    state: &'a String,
+    code_challenge: Option<&'a String>,
+    code_challenge_method: Option<&'a String>,
+    scope: Option<&'a String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -44,7 +31,7 @@ async fn endpoint(query: web::Query<Query>, data: web::Data<crate::AppState>) ->
         return HttpResponse::BadRequest().body("Invalid response_type");
     }
 
-    if query.code_challenge_method != Some("S256".into()) || query.code_challenge_method.is_none() {
+    if !(query.code_challenge_method == Some("S256".into()) || query.code_challenge_method.is_none()) {
         return HttpResponse::BadRequest().body("Invalid code_challenge_method");
     }
 
@@ -52,23 +39,14 @@ async fn endpoint(query: web::Query<Query>, data: web::Data<crate::AppState>) ->
         return HttpResponse::BadRequest().body("Unknown identity");
     }
 
-    // fetch client_id
-    // validate redirect_uri with client_id
-
-    let req = crate::AuthorizationRequest {
-        authorization_code: generate_code(),
-        client_id: query.client_id.clone(),
-        redirect_uri: query.redirect_uri.clone(),
-        code_challenge: query.code_challenge.clone(),
-        code_challenge_method: query.code_challenge_method.clone(),
-        state: query.state.clone(),
-    };
-
-    data.register_authorization_request(req.clone());
+    // fetch client_id and validate redirect_uri
 
     HttpResponse::Ok().body(View {
-        code: &req.authorization_code,
         client_id: &query.client_id,
-        scope: &query.scope.as_ref().unwrap_or(&"".into()),
+        redirect_uri: &query.redirect_uri,
+        state: &query.state,
+        scope: query.scope.as_ref(),
+        code_challenge: query.code_challenge.as_ref(),
+        code_challenge_method: query.code_challenge_method.as_ref(),
     }.render().unwrap())
 }

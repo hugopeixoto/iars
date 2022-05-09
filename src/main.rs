@@ -3,11 +3,11 @@ use std::sync::Mutex;
 use serde::Deserialize;
 use sha2::Digest;
 use base64::{decode_config, URL_SAFE};
-use rand::{thread_rng, Rng};
-use libotp::totp;
 
+mod utils;
 mod authorization;
 mod authorize;
+mod consent;
 mod metadata;
 
 #[derive(Default)]
@@ -23,6 +23,11 @@ impl CircuitBreaker {
         if self.attempts >= 3 {
             self.broken = true;
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.attempts = 0;
+        self.broken = false;
     }
 }
 
@@ -53,10 +58,17 @@ impl AuthorizationRequest {
     }
 }
 
+struct AuthorizationChannel {
+   receiver: Mutex<tokio::sync::mpsc::Receiver<bool>>,
+   sender: tokio::sync::mpsc::Sender<bool>,
+   code: Mutex<Option<String>>,
+}
+
 struct AppState {
     breaker: Mutex<CircuitBreaker>,
     config: Config,
     authorization_requests: Mutex<Vec<AuthorizationRequest>>,
+    authorization_channel: AuthorizationChannel,
 }
 
 impl AppState {
@@ -71,6 +83,13 @@ impl AppState {
 
         breaker.fail();
     }
+
+    fn reset(&self) {
+        let mut breaker = self.breaker.lock().unwrap();
+
+        breaker.reset();
+    }
+
 
     fn register_authorization_request(&self, request: AuthorizationRequest) {
         let mut requests = self.authorization_requests.lock().unwrap();
@@ -137,7 +156,7 @@ async fn token(form: web::Form<Form>, data: web::Data<AppState>) -> impl Respond
 
 #[derive(Deserialize, Clone)]
 struct Config {
-    totp_secret: String,
+    unifiedpush_endpoint: String,
     me: String,
     base_url: String,
     listen_address: String,
@@ -149,30 +168,17 @@ async fn main() -> std::io::Result<()> {
     let content = std::fs::read_to_string(std::env::var("IARS_CONFIG_FILE").unwrap())?;
     let config: Config = toml::from_str(&content)?;
 
-    if std::env::args().nth(1) == Some("generate-secret".into()) {
-        let mut secret = String::new();
-        let mut rng = thread_rng();
-
-        for _ in 0..32 {
-            secret.push("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".chars().collect::<Vec<_>>()[rng.gen_range(0 .. 32)]);
-        }
-
-        println!("secret: {}", secret);
-
-        return Ok(());
-    }
-
-    if std::env::args().nth(1) == Some("show-totp".into()) {
-        println!("{}", totp(&config.totp_secret, 6, 30, 0).unwrap());
-
-        return Ok(());
-    }
-
+    let (tx, rx) = tokio::sync::mpsc::channel(100);
 
     let data = web::Data::new(AppState {
         breaker: Mutex::new(CircuitBreaker::default()),
         config: config.clone(),
         authorization_requests: Mutex::new(vec![]),
+        authorization_channel: AuthorizationChannel {
+            receiver: Mutex::new(rx),
+            sender: tx,
+            code: Mutex::new(None),
+        },
     });
 
     HttpServer::new(move || {
@@ -181,6 +187,7 @@ async fn main() -> std::io::Result<()> {
             .service(metadata::endpoint)
             .service(authorization::endpoint)
             .service(authorize::endpoint)
+            .service(consent::endpoint)
             .service(token)
     })
     .bind((config.listen_address, config.listen_port))?

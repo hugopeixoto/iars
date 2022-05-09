@@ -1,12 +1,21 @@
 <h1>Authorize yourself!</h1>
 
 <form method='post' action='/consent'>
-  <div><input type='text' name='totp'></div>
-  <input type='hidden' name='code' value='{{ code }}' />
+  <input type='hidden' name='client_id' value='{{ client_id }}' />
+  <input type='hidden' name='redirect_uri' value='{{ redirect_uri }}' />
+  <input type='hidden' name='state' value='{{ state }}' />
+  {% if scope.is_some() %}
+  <input type='hidden' name='scope' value='{{ scope.unwrap() }}' />
+  {% endif %}
+  {% if code_challenge.is_some() %}
+  <input type='hidden' name='code_challenge' value='{{ code_challenge.unwrap() }}' />
+  {% endif %}
+  {% if code_challenge_method.is_some() %}
+  <input type='hidden' name='code_challenge_method' value='{{ code_challenge_method.unwrap() }}' />
+  {% endif %}
+
 
   <p>client: {{ client_id }}</p>
-
-  <p>scopes: {{ scope }}</p>
 
   <input type='submit' value='consent' />
 </form>
