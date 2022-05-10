@@ -97,12 +97,6 @@ impl AppState {
         requests.push(request);
     }
 
-    fn find_authorization_request(&self, code: &String) -> Option<AuthorizationRequest> {
-        let requests = self.authorization_requests.lock().unwrap();
-
-        requests.iter().find(|r| r.authorization_code == *code).cloned()
-    }
-
     fn consume_authorization_request(&self, code: &String) -> Option<AuthorizationRequest> {
         let mut requests = self.authorization_requests.lock().unwrap();
 
@@ -116,7 +110,7 @@ impl AppState {
 
 #[derive(Deserialize)]
 struct Form {
-    grant_type: String,
+    grant_type: Option<String>,
     code: String,
     client_id: String,
     redirect_uri: String,
@@ -125,30 +119,36 @@ struct Form {
 
 #[post("/authorize")]
 async fn token(form: web::Form<Form>, data: web::Data<AppState>) -> impl Responder {
-    if form.grant_type != "authorization_code" {
+    if form.grant_type.as_ref().unwrap_or(&"authorization_code".into()) != "authorization_code" {
+        println!("POST /authorize: invalid grant_type {:?}", form.grant_type);
         return HttpResponse::BadRequest().body("Invalid grant_type");
     }
 
     let req = data.consume_authorization_request(&form.code);
 
     if req.is_none() {
+        println!("POST /authorize: invalid code {}", form.code);
         return HttpResponse::BadRequest().body("Invalid code");
     }
 
     let req = req.unwrap();
 
     if req.client_id != form.client_id {
+        println!("POST /authorize: invalid client_id {} (expected {})", form.client_id, req.client_id);
         return HttpResponse::BadRequest().body("Invalid client_id");
     }
 
     if req.redirect_uri != form.redirect_uri {
+        println!("POST /authorize: invalid redirect_uri {} (expected {})", form.redirect_uri, req.redirect_uri);
         return HttpResponse::BadRequest().body("Invalid redirect_uri");
     }
 
     if !req.verify(&form.code_verifier) {
+        println!("POST /authorize: invalid code_verifier {:?}", form.code_verifier);
         return HttpResponse::BadRequest().body("Invalid code_verifier");
     }
 
+    println!("POST /authorize: success");
     HttpResponse::Ok()
         .insert_header(("Content-Type", "application/json"))
         .body(format!("{{\"me\":\"{}\"}}", data.config.me))
